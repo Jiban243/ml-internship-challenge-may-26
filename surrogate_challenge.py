@@ -77,18 +77,18 @@ def fit_surrogate(train_df, feature_names, teacher):
     Features are standardized before boosting, and hyper-parameters are chosen
     by 5-fold cross-validation.
     """
-    # Sample the training rows to keep the grid search fast.
-    sample = train_df.sample(frac=TUNING_SAMPLE_FRAC, random_state=RANDOM_STATE)
-
-    scaler = StandardScaler().fit(sample[feature_names])
-    X = scaler.transform(sample[feature_names])
+    # FIX 1 & 2: Fit the scaler on the ENTIRE training set for absolute scale consistency,
+    # and utilize all available data rows to prevent training on downsampled noise.
+    scaler = StandardScaler().fit(train_df[feature_names])
+    X_full = scaler.transform(train_df[feature_names])
 
     # Note for the model card: which inputs the forest leans on most.
     ranked = np.array(feature_names)[np.argsort(teacher.feature_importances_)]
     print(f"Top forest drivers: {[str(f) for f in ranked[-3:][::-1]]}")
 
-    # Regression target for the surrogate.
-    target = sample["target"].values
+    # FIX 3: The ultimate fix. A surrogate model must learn to replicate the teacher's behavior.
+    # Therefore, the target must be the teacher's predictions, NOT the ground truth labels!
+    target = teacher.predict(train_df[feature_names].values)
 
     param_grid = {
         "n_estimators": [300, 600],
@@ -102,8 +102,10 @@ def fit_surrogate(train_df, feature_names, teacher):
         random_state=RANDOM_STATE,
         n_jobs=1,
     )
+    
+    # Fit the GridSearchCV tracking the teacher targets across the complete training space
     search = GridSearchCV(base, param_grid, scoring="r2", cv=5, n_jobs=-1)
-    search.fit(X, target)
+    search.fit(X_full, target)
 
     print(f"Best CV score (R^2): {search.best_score_:.4f}")
     print(f"Best params       : {search.best_params_}")
